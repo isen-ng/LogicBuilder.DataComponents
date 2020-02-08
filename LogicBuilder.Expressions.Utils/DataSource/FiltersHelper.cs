@@ -103,23 +103,30 @@ namespace LogicBuilder.Expressions.Utils.DataSource
             string field = checkForNull
                 ? filter.Field.CheckForNull<T>(parameterName, values)
                 : string.Concat(parameterName, PERIOD, filter.Field);
+            //Handle field as member of other parameters i.e. replace parameter name where necessary.
+            //May need a different filter class
 
             int index = filters.IndexOf(filter);
 
             string comparison = operators[filter.Operator];
 
             if (filter.Operator == "doesnotcontain")
-                return String.Format("!{0}.{1}(@{2})", field, comparison, index);
+                return $"!{field}.{comparison}(@{index})";
 
             if (filter.Operator == "startswith" || filter.Operator == "endswith" || filter.Operator == "contains")
-                return String.Format("{0}.{1}(@{2})", field, comparison, index);
+                return $"{field}.{comparison}(@{index})";
 
             if (filter.Operator == "isnotnull" || filter.Operator == "isnull")
-                filter.Value = null;
+                values[index] = null;
+            //filter.Value = null;
             if (filter.Operator == "isnotempty" || filter.Operator == "isempty")
-                filter.Value = string.Empty;
+                values[index] = string.Empty;
+            //filter.Value = string.Empty;
 
-            return String.Format("{0} {1} @{2}", field, comparison, index);
+            if (!string.IsNullOrEmpty(filter.ValueSourceParameter))
+                return $"{field} {comparison} {values[index]}";
+
+            return $"{field} {comparison} @{index}";
         }
 
         /// <summary>
@@ -136,10 +143,10 @@ namespace LogicBuilder.Expressions.Utils.DataSource
         {
             List<string> expressions = new List<string>();
             if (filterGroup.Filters != null && filterGroup.Filters.Any())
-                expressions.AddRange(filterGroup.Filters.Select(fil => fil.ToExpression<T>(filters, parameterName, values, checkForNull)).ToArray());
+                expressions.AddRange(filterGroup.Filters.Select(fil => fil.ToExpression<T>(filters, parameterName, values, checkForNull)));
                 
             if (filterGroup.FilterGroups != null && filterGroup.FilterGroups.Any())
-                expressions.AddRange(filterGroup.FilterGroups.Select(fil => fil.ToExpression<T>(filters, parameterName, values, checkForNull)).ToArray());
+                expressions.AddRange(filterGroup.FilterGroups.Select(fil => fil.ToExpression<T>(filters, parameterName, values, checkForNull)));
 
             return "(" + String.Join(" " + filterGroup.Logic + " ", expressions) + ")";
         }
@@ -168,7 +175,7 @@ namespace LogicBuilder.Expressions.Utils.DataSource
                 sb.Append(check);
             }
 
-            dynamic val = pInfo.GetMemberType() == typeof(string)
+            object val = pInfo.GetMemberType() == typeof(string)
                 ? ""
                 : Activator.CreateInstance(GetValueType(pInfo.GetMemberType()));
 
@@ -227,17 +234,17 @@ namespace LogicBuilder.Expressions.Utils.DataSource
                 values.ToArray()) as Expression<Func<T, bool>>;
         }
 
-        public static LambdaExpression GetFilterExpression(this FilterGroup filterGroup, Type type, string parameterName = "f") 
+        public static LambdaExpression GetFilterExpression(this FilterGroup filterGroup, Type type, string parameterName = "f", Expression parentExpression = null) 
             => (LambdaExpression)"_GetFilterExpression"
             .GetMethod()
             .MakeGenericMethod(type)
-            .Invoke(null, new object[] { filterGroup, parameterName });
+            .Invoke(null, new object[] { filterGroup, parameterName, parentExpression });
 
         private static MethodInfo GetMethod(this string methodName)
            => typeof(FiltersHelper).GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static);
 
-        private static Expression<Func<T, bool>> _GetFilterExpression<T>(this FilterGroup filterGroup, string parameterName = "f") where T : class
-            => filterGroup.GetFilterExpression<T>(parameterName);
+        private static Expression<Func<T, bool>> _GetFilterExpression<T>(this FilterGroup filterGroup, string parameterName = "f", Expression parentExpression = null) where T : class
+            => filterGroup.GetFilterExpression<T>(parameterName, parentExpression);
 
         /// <summary>
         /// Creates a filter expression from a filter group
@@ -246,7 +253,7 @@ namespace LogicBuilder.Expressions.Utils.DataSource
         /// <param name="filterGroup"></param>
         /// <param name="parameterName"></param>
         /// <returns></returns>
-        public static Expression<Func<T, bool>> GetFilterExpression<T>(this FilterGroup filterGroup, string parameterName = "f") where T : class
+        public static Expression<Func<T, bool>> GetFilterExpression<T>(this FilterGroup filterGroup, string parameterName = "f", Expression parentExpression = null) where T : class
         {
             if (filterGroup == null || 
                 ((filterGroup.FilterGroups == null || filterGroup.FilterGroups.Count() == 0) && (filterGroup.Filters == null || filterGroup.Filters.Count() == 0)))
@@ -257,19 +264,45 @@ namespace LogicBuilder.Expressions.Utils.DataSource
             {
                 MemberInfo pInfo = typeof(T).GetMemberInfoFromFullName(f.Field);
                 if (f.Value != null && pInfo.GetMemberType() != f.Value.GetType())//convert values if necessary
-                    f.Value = Convert.ChangeType(f.Value, pInfo.GetMemberType());//NewtonSoft Json defaults to long for whole numbers and double for fractions
+                    return Convert.ChangeType(f.Value, pInfo.GetMemberType());//NewtonSoft Json defaults to long for whole numbers and double for fractions
+
+                if (!string.IsNullOrEmpty(f.ValueSourceParameter))
+                    return string.IsNullOrEmpty(f.ValueSourceMember) ? f.ValueSourceParameter : $"{f.ValueSourceParameter}.{f.ValueSourceMember}";
 
                 return f.Value;
             }).ToList();
 
-            return System.Linq.Dynamic.Core.DynamicExpressionParser.ParseLambda
+            ParameterExpression filterParam = Expression.Parameter(typeof(T), parameterName);
+            ParameterExpression[] parameters = parentExpression == null
+                ? new ParameterExpression[] { filterParam }
+                : parentExpression.GetAllParameters().Concat(new ParameterExpression[] { filterParam }).ToArray();
+
+            LambdaExpression lambdaExpression = System.Linq.Dynamic.Core.DynamicExpressionParser.ParseLambda
             (
                 false,
-                new ParameterExpression[] { Expression.Parameter(typeof(T), parameterName) },
+                parameters,
                 typeof(bool),
                 filterGroup.ToExpression<T>(filters, parameterName, values, false),
                 values.ToArray()
-            ) as Expression<Func<T, bool>>;
+            );
+
+            LambdaExpression lambdaExpression1 = Expression.Lambda
+            (
+                typeof(Func<,>).MakeGenericType(new Type[] { typeof(T), typeof(bool) }),
+                lambdaExpression.Body,
+                filterParam
+            );
+
+            return lambdaExpression1 as Expression<Func<T, bool>>;
+
+            //return System.Linq.Dynamic.Core.DynamicExpressionParser.ParseLambda
+            //(
+            //    false,
+            //    new ParameterExpression[] { Expression.Parameter(typeof(T), parameterName) },
+            //    typeof(bool),
+            //    filterGroup.ToExpression<T>(filters, parameterName, values, false),
+            //    values.ToArray()
+            //) as Expression<Func<T, bool>>;
         }
     }
 }

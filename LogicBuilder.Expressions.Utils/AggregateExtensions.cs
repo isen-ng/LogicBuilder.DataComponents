@@ -1,4 +1,5 @@
-﻿using LogicBuilder.Expressions.Utils.Properties;
+﻿using LogicBuilder.Expressions.Utils.DataSource;
+using LogicBuilder.Expressions.Utils.Properties;
 using System;
 using System.Linq;
 using System.Linq.Expressions;
@@ -46,13 +47,17 @@ namespace LogicBuilder.Expressions.Utils
             return Expression.Lambda<Func<IQueryable<T>, int>>(param.GetCountMethodCall(), param);
         }
 
-        public static MethodCallExpression GetCountMethodCall(this Expression expression)
-            => Expression.Call
+        public static MethodCallExpression GetCountMethodCall(this Expression expression, params Expression[] args)
+            => expression.GetMethodCall("Count", args);
+
+        public static MethodCallExpression GetCountMethodCall(this Expression expression, FilterGroup filterGroup, string filterParameterName = "a") 
+            => expression.GetCountMethodCall
             (
-                typeof(Queryable),
-                "Count",
-                new Type[] { expression.GetUnderlyingElementType() },
-                expression
+                filterGroup.GetFilterExpression
+                (
+                    expression.GetUnderlyingElementType(), 
+                    filterParameterName
+                )
             );
 
         /// <summary>
@@ -84,6 +89,23 @@ namespace LogicBuilder.Expressions.Utils
                 propertyFullName.GetTypedSelector(expression.GetUnderlyingElementType())
             );
 
+        public static MethodCallExpression GetMinMethodCall(this Expression expression, string memberFullName, string selectorParameterName = "a")
+        {
+            Type sourceType = expression.GetUnderlyingElementType();
+            MemberInfo memberInfo = sourceType.GetMemberInfoFromFullName(memberFullName);
+            return Expression.Call
+            (
+                typeof(Queryable),
+                "Min",
+                new Type[] { sourceType, memberInfo.GetMemberType() },
+                expression,
+                memberFullName.GetTypedSelector(sourceType, selectorParameterName)
+            );
+        }
+
+        public static MethodCallExpression GetMinMethodCall(this Expression expression)
+            => expression.GetMethodCall("Min");
+
         /// <summary>
         /// Returns an expression for the Max method call which takes lambda expression as a property selctor e.g. q => q.Max(x => x.Balance). <![CDATA[ Expression<Func<IQueryable<Account>, double>> maxExpression  ]]>
         /// </summary>
@@ -113,6 +135,23 @@ namespace LogicBuilder.Expressions.Utils
                 propertyFullName.GetTypedSelector(expression.GetUnderlyingElementType())
             );
 
+        public static MethodCallExpression GetMaxMethodCall(this Expression expression, string memberFullName, string selectorParameterName = "a")
+        {
+            Type sourceType = expression.GetUnderlyingElementType();
+            MemberInfo memberInfo = sourceType.GetMemberInfoFromFullName(memberFullName);
+            return Expression.Call
+            (
+                typeof(Queryable),
+                "Max",
+                new Type[] { sourceType, memberInfo.GetMemberType() },
+                expression,
+                memberFullName.GetTypedSelector(sourceType, selectorParameterName)
+            );
+        }
+
+        public static MethodCallExpression GetMaxMethodCall(this Expression expression) 
+            => expression.GetMethodCall("Max");
+
         /// <summary>
         /// Returns an expression for the Average method call which takes lambda expression as a property selctor e.g. q => q.Average(x => x.Balance) <![CDATA[ Expression<Func<IQueryable<Account>, double>> averageExpression ]]>
         /// </summary>
@@ -131,14 +170,24 @@ namespace LogicBuilder.Expressions.Utils
             return Expression.Lambda(delegateType, mce, param);
         }
 
-        public static MethodCallExpression GetAverageMethodCall(this Expression expression, string propertyFullName)
+        public static MethodCallExpression GetAverageMethodCall(this Expression expression, string propertyFullName, string selectorParameterName = "a")
+            => expression.GetMethodCall
+            (
+                "Average", 
+                propertyFullName.GetTypedSelector
+                (
+                    expression.GetUnderlyingElementType(), 
+                    selectorParameterName
+                )
+            );
+
+        public static MethodCallExpression GetAverageMethodCall(this Expression expression)
             => Expression.Call
             (
                 typeof(Queryable),
                 "Average",
-                new Type[] { expression.GetUnderlyingElementType() },
-                expression,
-                propertyFullName.GetTypedSelector(expression.GetUnderlyingElementType())
+                null,//non-generic Average
+                expression
             );
 
         /// <summary>
@@ -159,14 +208,24 @@ namespace LogicBuilder.Expressions.Utils
             return Expression.Lambda(delegateType, mce, param);
         }
 
-        public static MethodCallExpression GetSumMethodCall(this Expression expression, string propertyFullName)
+        public static MethodCallExpression GetSumMethodCall(this Expression expression, string propertyFullName, string selectorParameterName = "a")
+            => expression.GetMethodCall
+            (
+                "Sum",
+                propertyFullName.GetTypedSelector
+                (
+                    expression.GetUnderlyingElementType(),
+                    selectorParameterName
+                )
+            );
+
+        public static MethodCallExpression GetSumMethodCall(this Expression expression)
             => Expression.Call
             (
                 typeof(Queryable),
                 "Sum",
-                new Type[] { expression.GetUnderlyingElementType() },
-                expression,
-                propertyFullName.GetTypedSelector(expression.GetUnderlyingElementType())
+                null,//non-generic Sum
+                expression
             );
 
         public static Expression GetAggregateMethodCall(this Expression expression, string aggregateMethod, string propertyFullName)

@@ -85,18 +85,8 @@ namespace LogicBuilder.Expressions.Utils
             return genericArguments[0];
         }
 
-        public static Type GetUnderlyingElementType(this Expression expression)
-        {
-            TypeInfo tInfo = expression.Type.GetTypeInfo();
-            if (tInfo.IsArray)
-                return tInfo.GetElementType();
-
-            Type[] genericArguments;
-            if (!tInfo.IsGenericType || (genericArguments = tInfo.GetGenericArguments()).Length != 1)
-                throw new ArgumentException("type");
-
-            return genericArguments[0];
-        }
+        public static Type GetUnderlyingElementType(this Expression expression) 
+            => expression.Type.GetUnderlyingElementType();
 
         /// <summary>
         /// 

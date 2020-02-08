@@ -298,6 +298,22 @@ namespace LogicBuilder.Kendo.ExpressionExtensions.IntegrationTests
 
             Assert.True(list.Count > 0);
         }
+
+        [Fact]
+        public void Query_Async_Average_Student_id()
+        {
+            ISchoolRepository repository = serviceProvider.GetRequiredService<ISchoolRepository>();
+            double average = Task.Run
+            (
+                () => repository.QueryAsync<StudentModel, Student, double, double>
+                (
+                    s => s.Where(a => (a.ID > 1))
+                    .OrderBy(a => a.LastName).ThenByDescending(a => a.FirstName).Skip(1).Take(5).Average(a => a.ID)
+                )
+            ).Result;
+
+            Assert.True(average > 0);
+        }
         #endregion Tests
 
         #region Seed DB

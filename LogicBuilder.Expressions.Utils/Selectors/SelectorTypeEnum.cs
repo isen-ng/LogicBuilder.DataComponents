@@ -1,0 +1,31 @@
+﻿namespace LogicBuilder.Expressions.Utils.Selectors
+{
+    public enum SelectorTypeEnum
+    {
+        Member,
+        Average,
+        Count,
+        Min,
+        Max,
+        Sum,
+        First,
+        FirstOrDefault,
+        Last,
+        LastOrDefault,
+        Single,
+        SingleOrDefault,
+        All,
+        Any,
+        Where,
+        Select,
+        SelectMany,
+        OrderBy,
+        ThenBy,
+        Skip,
+        Take,
+        Distinct,
+        GroupBy,
+        ToList,
+        AsQueryable
+    }
+}

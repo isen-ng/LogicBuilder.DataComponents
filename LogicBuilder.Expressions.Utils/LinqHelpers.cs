@@ -1,6 +1,7 @@
 ﻿using LogicBuilder.Expressions.Utils.DataSource;
 using LogicBuilder.Expressions.Utils.Strutures;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -126,6 +127,20 @@ namespace LogicBuilder.Expressions.Utils
                 Filter = filteredInclude.FilterGroup.GetFilterExpression(propertyType),
                 FilteredIncludes = filteredInclude.FilteredIncludes?.Select(fi => fi.BuildFilteredIncludeExpression(propertyType)).ToList()
             };
+        }
+
+        public static ParameterExpression FindParameterByName(this Expression parentExpression, string parameterName)
+        {
+            FindParameterExpressionVisitor visitor = new FindParameterExpressionVisitor(parameterName);
+            visitor.Visit(parentExpression);
+            return visitor.SelectedParameter;
+        }
+
+        public static ICollection<ParameterExpression> GetAllParameters(this Expression parentExpression)
+        {
+            FindAllParametersExpressionVisitor visitor = new FindAllParametersExpressionVisitor();
+            visitor.Visit(parentExpression);
+            return visitor.Parameters;
         }
     }
 }

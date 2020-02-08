@@ -10,7 +10,8 @@ namespace LogicBuilder.Expressions.Utils.DataSource
                 string Oper,
                 string Value = null,
                 string ValueSourceMember = null,
-                string ValueSourceType = null
+                string ValueSourceType = null,
+                string ValueSourceParameter = null
             )
         {
             this.Field = Field;
@@ -18,6 +19,7 @@ namespace LogicBuilder.Expressions.Utils.DataSource
             this.Value = Value;
             this.ValueSourceMember = ValueSourceMember;
             this.ValueSourceType = ValueSourceType;
+            this.ValueSourceParameter = ValueSourceParameter;
         }
 
         public Filter() { }
@@ -26,6 +28,7 @@ namespace LogicBuilder.Expressions.Utils.DataSource
         public string Operator { get; set; }
         public object Value { get; set; }
         public string ValueSourceType { get; set; }
+        public string ValueSourceParameter { get; set; }
         public string ValueSourceMember { get; set; }
         public string Logic { get; set; }
         public IEnumerable<Filter> Filters { get; set; }

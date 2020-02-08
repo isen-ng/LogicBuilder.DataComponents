@@ -1,4 +1,5 @@
 ﻿using LogicBuilder.Expressions.Utils.DataSource;
+using LogicBuilder.Expressions.Utils.Selectors;
 using LogicBuilder.Expressions.Utils.Strutures;
 using System;
 using System.Collections.Generic;
@@ -41,29 +42,68 @@ namespace LogicBuilder.Expressions.Utils
         {
             MethodCallExpression resultExp = sorts.SortDescriptions.Aggregate(null, (MethodCallExpression mce, SortDescription description) =>
             {
-                LambdaExpression selectorExpression = description.PropertyName.GetTypedSelector<TSource>();
-                MemberInfo orderByPropertyInfo = typeof(TSource).GetMemberInfoFromFullName(description.PropertyName);
-                Type[] genericArgumentsForMethod = new Type[] { typeof(TSource), orderByPropertyInfo.GetMemberType() };
-
-                if (mce == null)
-                {//OrderBy and OrderByDescending espressions take two arguments each.  The parameter (object being extended by the helper method) and the lambda expression for the property selector
-                    mce = description.SortDirection == ListSortDirection.Ascending
-                        ? Expression.Call(typeof(Queryable), "OrderBy", genericArgumentsForMethod, expression, selectorExpression)
-                        : Expression.Call(typeof(Queryable), "OrderByDescending", genericArgumentsForMethod, expression, selectorExpression);
-                }
-                else
-                {//ThenBy and ThenByDescending espressions take two arguments each.  The resulting method call expression from OrderBy or OrderByDescending and the lambda expression for the property selector
-                    mce = description.SortDirection == ListSortDirection.Ascending
-                        ? Expression.Call(typeof(Queryable), "ThenBy", genericArgumentsForMethod, mce, selectorExpression)
-                        : Expression.Call(typeof(Queryable), "ThenByDescending", genericArgumentsForMethod, mce, selectorExpression);
-                }
-                return mce;
+                return mce == null
+                    ? expression.GetOrderByCall(description.PropertyName, description.SortDirection)
+                    : mce.GetThenByCall(description.PropertyName, description.SortDirection);
             });
 
-            resultExp = Expression.Call(typeof(Queryable), "Skip", new[] { typeof(TSource) }, resultExp, Expression.Constant(sorts.Skip));
-            resultExp = Expression.Call(typeof(Queryable), "Take", new[] { typeof(TSource) }, resultExp, Expression.Constant(sorts.Take));
+            return resultExp.GetSkipCall(sorts.Skip).GetTakeCall(sorts.Take);
+        }
 
-            return resultExp;
+        public static MethodCallExpression GetSkipCall(this Expression expression, int skip) 
+            => Expression.Call
+            (
+                typeof(Queryable), 
+                "Skip", 
+                new[] { expression.GetUnderlyingElementType() }, 
+                expression, 
+                Expression.Constant(skip)
+            );
+
+        public static MethodCallExpression GetTakeCall(this Expression expression, int take)
+            => Expression.Call
+            (
+                typeof(Queryable),
+                "Take",
+                new[] { expression.GetUnderlyingElementType() },
+                expression,
+                Expression.Constant(take)
+            );
+
+        public static MethodCallExpression GetOrderByCall(this Expression expression, string memberFullName, ListSortDirection sortDirection, string selectorParameterName = "a")
+        {
+            return GetCall(expression.GetUnderlyingElementType());
+            MethodCallExpression GetCall(Type sourceType) 
+                => Expression.Call
+                (
+                    typeof(Queryable),
+                    sortDirection == ListSortDirection.Ascending ? "OrderBy" : "OrderByDescending",
+                    new Type[] 
+                    { 
+                        sourceType, 
+                        sourceType.GetMemberInfoFromFullName(memberFullName).GetMemberType() 
+                    },
+                    expression,
+                    memberFullName.GetTypedSelector(sourceType, selectorParameterName)
+                );
+        }
+
+        public static MethodCallExpression GetThenByCall(this Expression expression, string memberFullName, ListSortDirection sortDirection, string selectorParameterName = "a")
+        {
+            return GetCall(expression.GetUnderlyingElementType());
+            MethodCallExpression GetCall(Type sourceType) 
+                => Expression.Call
+                (
+                    typeof(Queryable),
+                    sortDirection == ListSortDirection.Ascending ? "ThenBy" : "ThenByDescending",
+                    new Type[] 
+                    { 
+                        sourceType, 
+                        sourceType.GetMemberInfoFromFullName(memberFullName).GetMemberType() 
+                    },
+                    expression,
+                    memberFullName.GetTypedSelector(sourceType, selectorParameterName)
+                );
         }
 
         /// <summary>
@@ -91,12 +131,49 @@ namespace LogicBuilder.Expressions.Utils
         /// <param name="groupByProperty"></param>
         /// <param name="parameterName"></param>
         /// <returns></returns>
-        public static MethodCallExpression GetGroupBy<TSource>(this Expression expression, string groupByProperty)
-        {
-            LambdaExpression selectorExpression = groupByProperty.GetObjectSelector<TSource>();
-            Type[] genericArgumentsForMethod = new Type[] { typeof(TSource), typeof(object) };
+        public static MethodCallExpression GetGroupBy<TSource>(this Expression expression, string groupByProperty, string parameterName = "a") 
+            => expression.GetGroupBy(typeof(TSource), groupByProperty, parameterName);
 
-            return Expression.Call(typeof(Queryable), "GroupBy", genericArgumentsForMethod, expression, selectorExpression);
+        public static MethodCallExpression GetGroupBy(this Expression expression, Type sourceType, string groupByProperty, string parameterName = "a")
+        {
+            LambdaExpression selectorExpression = groupByProperty.GetTypedSelector(sourceType, parameterName);
+
+            return Expression.Call
+            (
+                typeof(Queryable), 
+                "GroupBy",
+                new Type[] { sourceType, selectorExpression.ReturnType }, 
+                expression,
+                groupByProperty.GetObjectSelector(sourceType, parameterName)
+            );
+        }
+
+        public static MethodCallExpression GetGroupBy(this Expression expression, string groupByProperty, string parameterName = "a")
+        {
+            Type sourceType = expression.GetUnderlyingElementType();
+            LambdaExpression selectorExpression = groupByProperty.GetTypedSelector(sourceType, parameterName);
+
+            return Expression.Call
+            (
+                typeof(Queryable),
+                "GroupBy",
+                new Type[] { sourceType, selectorExpression.ReturnType },
+                expression,
+                groupByProperty.GetObjectSelector(sourceType, parameterName)
+            );
+        }
+
+        public static MethodCallExpression GetGroupBy(this Expression expression, string parameterName = "a")
+        {
+            Type sourceType = expression.GetUnderlyingElementType();
+            return Expression.Call
+            (
+                typeof(Queryable), 
+                "GroupBy",
+                new Type[] { sourceType, typeof(int) }, 
+                expression, 
+                Expression.Lambda(Expression.Constant(1), Expression.Parameter(sourceType, parameterName))
+            );
         }
 
         /// <summary>
@@ -165,6 +242,15 @@ namespace LogicBuilder.Expressions.Utils
             return Expression.Call(typeof(Queryable), "Where", genericArgumentsForMethod, expression, filterExpression);
         }
 
+        public static MethodCallExpression GetWhere(this Expression expression, FilterGroup filterGroup, string parameterName = "a")
+        {
+            Type parentType = expression.GetUnderlyingElementType();
+            LambdaExpression filterExpression = filterGroup.GetFilterExpression(parentType, parameterName, expression);
+            Type[] genericArgumentsForMethod = new Type[] { parentType };
+
+            return Expression.Call(typeof(Queryable), "Where", genericArgumentsForMethod, expression, filterExpression);
+        }
+
         /// <summary>
         /// Function to create a lambda expression from a diverse group of method call expressions.
         /// </summary>
@@ -196,13 +282,46 @@ namespace LogicBuilder.Expressions.Utils
 
         public static MethodCallExpression GetSelectNew<TSource>(this Expression expression, ICollection<string> propertyFullNames, string parameterName = "a") where TSource : class
         {
+            ParameterExpression selectorParameter = Expression.Parameter(typeof(TSource), parameterName);
+            
+            return GetSelectNew<TSource>
+            (
+                expression,
+                selectorParameter,
+                GetMemberDetails<TSource>(propertyFullNames, selectorParameter)
+            );
+        }
+
+        public static MethodCallExpression GetSelectNew<TSource>(this Expression expression, ParameterExpression selectorParameter, List<MemberDetails> memberDetails) where TSource : class
+        {
             return expression.GetSelectMethodExpression<TSource>
-                (
-                    //gets the flattened name for the anonymous type if necessary
-                    GetMemberDetails<TSource>(propertyFullNames),
-                    //Parameter for the selector 
-                    Expression.Parameter(typeof(TSource), parameterName)
-                );
+            (
+                memberDetails,
+                selectorParameter,
+                AnonymousTypeFactory.CreateAnonymousType(memberDetails)
+            );
+        }
+
+        public static MethodCallExpression GetSelectNew(this Expression expression, Type sourceType, ParameterExpression selectorParameter, List<MemberDetails> memberDetails)
+        {
+            return expression.GetSelectMethodExpression
+            (
+                sourceType,
+                memberDetails,
+                selectorParameter,
+                AnonymousTypeFactory.CreateAnonymousType(memberDetails)
+            );
+        }
+
+        public static MethodCallExpression GetSelectNew(this Expression expression, Type sourceType, ParameterExpression selectorParameter, List<MemberDetails> memberDetails, Type newType)
+        {
+            return expression.GetSelectMethodExpression
+            (
+                sourceType,
+                memberDetails,
+                selectorParameter,
+                newType
+            );
         }
 
         /// <summary>
@@ -221,11 +340,45 @@ namespace LogicBuilder.Expressions.Utils
         public static MethodCallExpression GetSingle(this Expression expression) => expression.GetMethodCall("Single");
 
         /// <summary>
+        /// Creates Single method call expression to run against a queryable
+        /// </summary>
+        /// <param name="expression"></param>
+        /// <param name="filter"></param>
+        /// <returns></returns>
+        public static MethodCallExpression GetSingle(this Expression expression, FilterGroup filterGroup, string filterParameterName = "a") 
+            => expression.GetMethodCall
+            (
+                "Single",
+                filterGroup.GetFilterExpression
+                (
+                    expression.GetUnderlyingElementType(),
+                    filterParameterName
+                )
+            );
+
+        /// <summary>
         /// Creates SingleOrDefault method call expression to run against a queryable
         /// </summary>
         /// <param name="expression"></param>
         /// <returns></returns>
         public static MethodCallExpression GetSingleOrDefault(this Expression expression) => expression.GetMethodCall("SingleOrDefault");
+
+        /// <summary>
+        /// Creates SingleOrDefault method call expression to run against a queryable
+        /// </summary>
+        /// <param name="expression"></param>
+        /// <param name="filter"></param>
+        /// <returns></returns>
+        public static MethodCallExpression GetSingleOrDefault(this Expression expression, FilterGroup filterGroup, string filterParameterName = "a") 
+            => expression.GetMethodCall
+            (
+                "SingleOrDefault",
+                filterGroup.GetFilterExpression
+                (
+                    expression.GetUnderlyingElementType(),
+                    filterParameterName
+                )
+            );
 
         /// <summary>
         /// Creates First method call expression to run against a queryable
@@ -235,14 +388,116 @@ namespace LogicBuilder.Expressions.Utils
         public static MethodCallExpression GetFirst(this Expression expression) => expression.GetMethodCall("First");
 
         /// <summary>
+        /// reates First method call expression to run against a queryable
+        /// </summary>
+        /// <param name="expression"></param>
+        /// <param name="filter"></param>
+        /// <returns></returns>
+        public static MethodCallExpression GetFirst(this Expression expression, FilterGroup filterGroup, string filterParameterName = "a") 
+            => expression.GetMethodCall
+            (
+                "First", 
+                filterGroup.GetFilterExpression
+                (
+                    expression.GetUnderlyingElementType(),
+                    filterParameterName
+                )
+            );
+
+        /// <summary>
         /// Creates FirstOrDefault method call expression to run against a queryable
         /// </summary>
         /// <param name="expression"></param>
         /// <returns></returns>
         public static MethodCallExpression GetFirstOrDefault(this Expression expression) => expression.GetMethodCall("FirstOrDefault");
 
-        private static MethodCallExpression GetMethodCall(this Expression expression, string methodName)
-            => Expression.Call(typeof(Queryable), methodName, new Type[] { expression.Type.GetUnderlyingElementType() }, expression);
+        /// <summary>
+        /// Creates FirstOrDefault method call expression to run against a queryable
+        /// </summary>
+        /// <param name="expression"></param>
+        /// <param name="filter"></param>
+        /// <returns></returns>
+        public static MethodCallExpression GetFirstOrDefault(this Expression expression, FilterGroup filterGroup, string filterParameterName = "a")
+            => expression.GetMethodCall
+            (
+                "FirstOrDefault",
+                filterGroup.GetFilterExpression
+                (
+                    expression.GetUnderlyingElementType(),
+                    filterParameterName
+                )
+            );
+
+        public static MethodCallExpression GetLast(this Expression expression) => expression.GetMethodCall("Last");
+
+        public static MethodCallExpression GetLast(this Expression expression, FilterGroup filterGroup, string filterParameterName = "a")
+            => expression.GetMethodCall
+            (
+                "Last",
+                filterGroup.GetFilterExpression
+                (
+                    expression.GetUnderlyingElementType(),
+                    filterParameterName
+                )
+            );
+
+        public static MethodCallExpression GetLastOrDefault(this Expression expression) => expression.GetMethodCall("LastOrDefault");
+
+        public static MethodCallExpression GetLastOrDefault(this Expression expression, FilterGroup filterGroup, string filterParameterName = "a")
+            => expression.GetMethodCall
+            (
+                "LastOrDefault",
+                filterGroup.GetFilterExpression
+                (
+                    expression.GetUnderlyingElementType(),
+                    filterParameterName
+                )
+            );
+
+        public static MethodCallExpression GetAny(this Expression expression) => expression.GetMethodCall("Any");
+
+        public static MethodCallExpression GetAny(this Expression expression, FilterGroup filterGroup, string filterParameterName = "a") 
+            => expression.GetMethodCall
+            (
+                "Any",
+                filterGroup.GetFilterExpression
+                (
+                    expression.GetUnderlyingElementType(),
+                    filterParameterName
+                )
+            );
+
+        public static MethodCallExpression GetAll(this Expression expression, FilterGroup filterGroup, string filterParameterName = "a") 
+            => expression.GetMethodCall
+            (
+                "All",
+                filterGroup.GetFilterExpression
+                (
+                    expression.GetUnderlyingElementType(),
+                    filterParameterName
+                )
+            );
+
+        public static MethodCallExpression GetToList(this Expression parentExpression)
+            => Expression.Call
+            (
+                typeof(Enumerable), 
+                "ToList", 
+                new Type[] { parentExpression.GetUnderlyingElementType() }, 
+                parentExpression
+            );
+
+        public static MethodCallExpression GetAsQueryable(this Expression parentExpression)
+            => Expression.Call(typeof(Queryable), "AsQueryable", new Type[] { parentExpression.GetUnderlyingElementType() }, parentExpression);
+
+        internal static MethodCallExpression GetMethodCall(this Expression expression, string methodName, params Expression[] args)
+            => Expression.Call
+            (
+                typeof(Queryable), 
+                methodName, 
+                new Type[] { expression.GetUnderlyingElementType() },
+                new Expression[] { expression }.Concat(args).ToArray()
+            );
 
         /// <summary>
         /// Create select new anonymous type using a dynamically created class called "AnonymousType" i.e. q => q.Select(p => new { ID = p.ID, FullName = p.FullName });
@@ -262,50 +517,57 @@ namespace LogicBuilder.Expressions.Utils
 
         public static MethodCallExpression GetSelectNew<TSource>(this Expression expression, IDictionary<string, string> propertyFullNames, string parameterName = "a") where TSource : class
         {
-            return expression.GetSelectMethodExpression<TSource>
-                (
-                    GetMemberDetails<TSource>(propertyFullNames),
-                    Expression.Parameter(typeof(TSource), parameterName)//Parameter for the selector 
-                );
+            ParameterExpression selectorParameter = Expression.Parameter(typeof(TSource), parameterName);
+            
+            return GetSelectNew<TSource>
+            (
+                expression,
+                selectorParameter,
+                GetMemberDetails<TSource>(propertyFullNames, selectorParameter)
+            );
         }
 
-        private static MethodCallExpression GetSelectMethodExpression<TSource>(this Expression expression, List<MemberDetails> memberDetails, ParameterExpression param)
+        private static MethodCallExpression GetSelectMethodExpression<TSource>(this Expression expression, List<MemberDetails> memberDetails, ParameterExpression param, Type newType) 
+            => expression.GetSelectMethodExpression(typeof(TSource), memberDetails, param, newType);
+
+        private static MethodCallExpression GetSelectMethodExpression(this Expression expression, Type sourceType, List<MemberDetails> memberDetails, ParameterExpression param, Type newType)
         {
-            //anonymous type
-            Type anonymousType = CreateAnonymousType(memberDetails);
-
-            //Bind anonymous type's member to TSource's selector.
-            IEnumerable<MemberBinding> bindings = memberDetails.Select
-            (
-                nameType => Expression.Bind
-                (
-                    //PropertyInfo for the anonymous type's member
-                    anonymousType.GetMemberInfoFromFullName(nameType.MemberName),
-                    //Selector expression for the TSource member
-                    nameType.SourceFullName.Split('.').Aggregate((Expression)param, (p, n) => Expression.MakeMemberAccess(p, p.Type.GetMemberInfo(n)))
-                )
-            );
-
             //Func<TSource, anonymous> s => new AnonymousType { Member = s.Member }
             LambdaExpression selectorExpression = Expression.Lambda
             (
-                typeof(Func<,>).MakeGenericType(new Type[] { typeof(TSource), anonymousType }),
-                Expression.MemberInit(Expression.New(anonymousType), bindings),
+                typeof(Func<,>).MakeGenericType(new Type[] { sourceType, newType }),
+                GetInitExpression(memberDetails, newType),
                 param
             );
 
             //IQueryable<anonymousType> Select<TSource, anonymousType>(this IQueryable<TSource> source, Expression<Func<TSource, anonymousType>> selector);
-            return Expression.Call(typeof(Queryable), "Select", new Type[] { typeof(TSource), anonymousType }, expression, selectorExpression);
+            return Expression.Call(typeof(Queryable), "Select", new Type[] { sourceType, newType }, expression, selectorExpression);
         }
 
-        private class MemberDetails
+        private static Expression GetInitExpression(List<MemberDetails> memberDetails, Type sourceType)
         {
-            public string SourceFullName { get; set; }
-            public string MemberName { get; set; }
-            public Type Type { get; set; }
+            //Bind anonymous type's member to TSource's selector.
+            IEnumerable<MemberBinding> bindings = memberDetails.Select
+            (
+                nameType => 
+                {
+                    Type memberType = sourceType.GetProperty(nameType.MemberName).PropertyType;
+                    Type selectorType = nameType.Selector.Type;
+                    return Expression.Bind(sourceType.GetProperty(nameType.MemberName), nameType.Selector);
+                }
+                //nameType => Expression.Bind
+                //(
+                //    //PropertyInfo for the anonymous type's member
+                //    sourceType.GetProperty(nameType.MemberName),
+                //    //Selector expression for the TSource member
+                //    nameType.Selector
+                //)
+            );
+
+            return Expression.MemberInit(Expression.New(sourceType), bindings);
         }
 
-        private static List<MemberDetails> GetMemberDetails<TSource>(IDictionary<string, string> propertyFullNames)
+        private static List<MemberDetails> GetMemberDetails<TSource>(IDictionary<string, string> propertyFullNames, ParameterExpression selectorParameter)
             => propertyFullNames.Aggregate(new List<MemberDetails>(), (list, next) =>
             {
                 Type t = typeof(TSource);
@@ -319,14 +581,21 @@ namespace LogicBuilder.Expressions.Utils
 
                 list.Add(new MemberDetails
                 {
-                    SourceFullName = string.Join(".", fullNameList),
+                    Selector = fullNameList.Aggregate
+                    (
+                        (Expression)selectorParameter, (param, n) => Expression.MakeMemberAccess
+                        (
+                            param,
+                            param.Type.GetMemberInfo(n)
+                        )
+                    ),
                     MemberName = next.Key,
                     Type = t
                 });
                 return list;
             });
 
-        private static List<MemberDetails> GetMemberDetails<TSource>(ICollection<string> propertyFullNames)
+        private static List<MemberDetails> GetMemberDetails<TSource>(ICollection<string> propertyFullNames, ParameterExpression selectorParameter)
             => propertyFullNames.Aggregate(new List<MemberDetails>(), (list, next) =>
             {
                 Type t = typeof(TSource);
@@ -340,48 +609,19 @@ namespace LogicBuilder.Expressions.Utils
 
                 list.Add(new MemberDetails
                 {
-                    SourceFullName = string.Join(".", fullNameList),
+                    Selector = fullNameList.Aggregate
+                    (
+                        (Expression)selectorParameter, (param, n) => Expression.MakeMemberAccess
+                        (
+                            param, 
+                            param.Type.GetMemberInfo(n)
+                        )
+                    ),
                     MemberName = string.Join("", fullNameList),
                     Type = t
                 });
                 return list;
             });
-
-        private static Type CreateAnonymousType(IEnumerable<MemberDetails> memberDetails)
-        {
-            AssemblyName dynamicAssemblyName = new AssemblyName("TempAssembly");
-            AssemblyBuilder dynamicAssembly = AssemblyBuilder.DefineDynamicAssembly(dynamicAssemblyName, AssemblyBuilderAccess.Run);
-            ModuleBuilder dynamicModule = dynamicAssembly.DefineDynamicModule("TempAssembly");
-            TypeBuilder typeBuilder = dynamicModule.DefineType("AnonymousType", TypeAttributes.Public);
-            MethodAttributes getSetAttr = MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig;
-
-            var builders = memberDetails.Select(info => new
-            {
-                FieldBuilder = typeBuilder.DefineField(string.Concat("_", info.MemberName), info.Type, FieldAttributes.Private),
-                PropertyBuilder = typeBuilder.DefineProperty(info.MemberName, PropertyAttributes.HasDefault, info.Type, null),
-                GetMethodBuilder = typeBuilder.DefineMethod(string.Concat("get_", info.MemberName), getSetAttr, info.Type, Type.EmptyTypes),
-                SetMethodBuilder = typeBuilder.DefineMethod(string.Concat("set_", info.MemberName), getSetAttr, null, new Type[] { info.Type })
-            });
-
-            builders.ToList().ForEach(builder =>
-            {
-                ILGenerator getMethodIL = builder.GetMethodBuilder.GetILGenerator();
-                getMethodIL.Emit(OpCodes.Ldarg_0);
-                getMethodIL.Emit(OpCodes.Ldfld, builder.FieldBuilder);
-                getMethodIL.Emit(OpCodes.Ret);
-
-                ILGenerator setMethodIL = builder.SetMethodBuilder.GetILGenerator();
-                setMethodIL.Emit(OpCodes.Ldarg_0);
-                setMethodIL.Emit(OpCodes.Ldarg_1);
-                setMethodIL.Emit(OpCodes.Stfld, builder.FieldBuilder);
-                setMethodIL.Emit(OpCodes.Ret);
-
-                builder.PropertyBuilder.SetGetMethod(builder.GetMethodBuilder);
-                builder.PropertyBuilder.SetSetMethod(builder.SetMethodBuilder);
-            });
-
-            return typeBuilder.CreateTypeInfo().AsType();
-        }
 
         /// <summary>
         /// Create a dictionary select from a list of properties in lieu of select new anonymous type.   New requires IL code.
@@ -532,5 +772,81 @@ namespace LogicBuilder.Expressions.Utils
                 parent,
                 BuildSelectorExpression(underlyingType, string.Join(".", parts), parameterName.ChildParameterName())//Join the remaining parts to create a full name
             );
+
+        public static LambdaExpression BuildSelector(ICollection<SelectorBase> selectors, Type sourceType, Type resultType, string parameterName = "s")
+        {
+            Type queryableType = typeof(IQueryable<>).MakeGenericType(sourceType);
+            ParameterExpression param = Expression.Parameter(queryableType, parameterName);
+            Dictionary<string, ParameterExpression> parentParameters = new Dictionary<string, ParameterExpression> { { parameterName, param } };
+            return Expression.Lambda
+            (
+                typeof(Func<,>).MakeGenericType(new[] { queryableType, resultType }),
+                selectors.BuildBody(param, parentParameters),
+                param
+            );
+        }
+
+        public static Expression BuildBody(this ICollection<SelectorBase> selectors, ParameterExpression param, Dictionary<string, ParameterExpression> parentParameters) 
+            => selectors.Aggregate((Expression)param, (ex, next) => next.GetExpression(ex, parentParameters));
+    }
+
+    public class MemberDetails
+    {
+        public Expression Selector { get; set; }
+        public string MemberName { get; set; }
+        public Type Type { get; set; }
+    }
+
+    public class SelectorDefinition
+    {
+        public string MemberName { get; set; }
+        public ICollection<SelectorBase> Selectors { get; set; }
+        public Type SourceType { get; set; }
+        public Type ResultType { get; set; }
+        public string ParameterName { get; set; }
+    }
+
+    public static class AnonymousTypeFactory
+    {
+        private static int classCount;
+
+        public static Type CreateAnonymousType(IEnumerable<MemberDetails> memberDetails)
+        {
+            AssemblyName dynamicAssemblyName = new AssemblyName("TempAssembly");
+            AssemblyBuilder dynamicAssembly = AssemblyBuilder.DefineDynamicAssembly(dynamicAssemblyName, AssemblyBuilderAccess.Run);
+            ModuleBuilder dynamicModule = dynamicAssembly.DefineDynamicModule("TempAssembly");
+            TypeBuilder typeBuilder = dynamicModule.DefineType(GetAnonymousTypeName(), TypeAttributes.Public);
+            MethodAttributes getSetAttr = MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig;
+
+            var builders = memberDetails.Select(info => new
+            {
+                FieldBuilder = typeBuilder.DefineField(string.Concat("_", info.MemberName), info.Type, FieldAttributes.Private),
+                PropertyBuilder = typeBuilder.DefineProperty(info.MemberName, PropertyAttributes.HasDefault, info.Type, null),
+                GetMethodBuilder = typeBuilder.DefineMethod(string.Concat("get_", info.MemberName), getSetAttr, info.Type, Type.EmptyTypes),
+                SetMethodBuilder = typeBuilder.DefineMethod(string.Concat("set_", info.MemberName), getSetAttr, null, new Type[] { info.Type })
+            });
+
+            builders.ToList().ForEach(builder =>
+            {
+                ILGenerator getMethodIL = builder.GetMethodBuilder.GetILGenerator();
+                getMethodIL.Emit(OpCodes.Ldarg_0);
+                getMethodIL.Emit(OpCodes.Ldfld, builder.FieldBuilder);
+                getMethodIL.Emit(OpCodes.Ret);
+
+                ILGenerator setMethodIL = builder.SetMethodBuilder.GetILGenerator();
+                setMethodIL.Emit(OpCodes.Ldarg_0);
+                setMethodIL.Emit(OpCodes.Ldarg_1);
+                setMethodIL.Emit(OpCodes.Stfld, builder.FieldBuilder);
+                setMethodIL.Emit(OpCodes.Ret);
+
+                builder.PropertyBuilder.SetGetMethod(builder.GetMethodBuilder);
+                builder.PropertyBuilder.SetSetMethod(builder.SetMethodBuilder);
+            });
+
+            return typeBuilder.CreateTypeInfo().AsType();
+        }
+
+        private static string GetAnonymousTypeName()
+            => "AnonymousType" + ++classCount;
     }
 }
