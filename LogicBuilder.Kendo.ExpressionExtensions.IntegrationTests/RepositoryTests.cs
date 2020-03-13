@@ -17,6 +17,8 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Threading.Tasks;
+using LogicBuilder.Kendo.ExpressionExtensions.IntegrationTests.Emulators;
+using Microsoft.Extensions.Logging;
 using Xunit;
 
 namespace LogicBuilder.Kendo.ExpressionExtensions.IntegrationTests
@@ -35,13 +37,27 @@ namespace LogicBuilder.Kendo.ExpressionExtensions.IntegrationTests
         #region Methods
         private void Initialize()
         {
+            var database = "ContosoUniVersity";
+            var username = "postgres";
+            var password = "abcd1234";
+            
+            var dbEmulator = new PostgresEmulator(
+                databaseName: database, 
+                username: username,
+                password: password);
+
+            Task.Run(async () => await dbEmulator.InitializeAsync()).Wait();
+
             serviceProvider = new ServiceCollection()
                 .AddDbContext<SchoolContext>
                 (
                     options =>
                     {
-                        options.UseInMemoryDatabase("ContosoUniVersity");
-                        options.UseInternalServiceProvider(new ServiceCollection().AddEntityFrameworkInMemoryDatabase().BuildServiceProvider());
+                        var connectionString =
+                            $"Host=localhost;Port=5432;Database={database};Username={password};Password=${password};";
+                        options.UseNpgsql(connectionString);
+                        //options.UseInMemoryDatabase("ContosoUniVersity");
+                        //options.UseInternalServiceProvider(new ServiceCollection().AddEntityFrameworkInMemoryDatabase().BuildServiceProvider());
                     },
                     ServiceLifetime.Transient
                 )
@@ -69,6 +85,16 @@ namespace LogicBuilder.Kendo.ExpressionExtensions.IntegrationTests
         #endregion Methods
 
         #region Tests
+        [Fact]
+        public void Get_enrollments_with_grade_a()
+        {
+            ISchoolRepository repository = serviceProvider.GetRequiredService<ISchoolRepository>();
+            ICollection<EnrollmentModel> list = Task.Run(() => 
+                repository.GetItemsAsync<EnrollmentModel, Enrollment>(e => e.GradeLetter == "A")).Result;
+
+            Assert.True(list.Count == 1);
+        }
+        
         [Fact]
         public void Get_students_with_no_includes()
         {
