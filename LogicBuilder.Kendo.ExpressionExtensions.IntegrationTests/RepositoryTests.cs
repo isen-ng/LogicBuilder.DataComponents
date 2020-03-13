@@ -54,7 +54,7 @@ namespace LogicBuilder.Kendo.ExpressionExtensions.IntegrationTests
                     options =>
                     {
                         var connectionString =
-                            $"Host=localhost;Port=5432;Database={database};Username={password};Password=${password};";
+                            $"Host=localhost;Port=5432;Database={database};Username={username};Password=${password};";
                         options.UseNpgsql(connectionString);
                         //options.UseInMemoryDatabase("ContosoUniVersity");
                         //options.UseInternalServiceProvider(new ServiceCollection().AddEntityFrameworkInMemoryDatabase().BuildServiceProvider());
